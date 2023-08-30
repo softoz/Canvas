@@ -1,23 +1,11 @@
 unit uCanvas;
 
 (* Generic off-screen drawing canvas *)
-(* 2016-18 pjde *)
+(* 2016-23 pjde *)
 
 {$mode objfpc}{$H+}
 {
-    Interpolation originally derived from FPCanvas whose copyright message reads :-
-
-    This file is part of the Free Pascal run time library.
-    Copyright (c) 2003 by the Free Pascal development team
-
-    Basic canvas definitions.
-
-    See the file COPYING.FPC, included in this distribution,
-    for details about the copyright.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+Image Resize algorithnm based on code by Gustavo Daud.
 
  **********************************************************************}
 
@@ -27,18 +15,62 @@ unit uCanvas;
 interface
 
 uses
-  Classes, SysUtils, FrameBuffer, uFontInfo, Ultibo, freetypeh, FPImage;
+  Classes, SysUtils, FrameBuffer, uFontInfo, Ultibo, freetypeh, FPImage, FPReadPNG, FPReadBMP, FPReadJPEG;
 
 type
+  TImage32Value = TFPCompactImgRGBA8BitValue;
+  PImage32Value = PFPCompactImgRGBA8BitValue;
 
-  TFPCustomInterpolation = class;
+  { TImage32 }
+
+  TImage32 = class (TFPCompactImgRGBA8Bit)
+  public
+    function GetScanline (no : integer) : PImage32Value;
+    property Data : PImage32Value read FData;
+  end;
+
+  { TLibImage }
+
+  TLibImage = class
+    Image : TImage32;
+    Path : string;
+    Name : string;
+    Width, Height : integer;
+    DefImage : boolean;
+    procedure Assign (Other : TLibImage);
+    constructor Create;
+    destructor Destroy; override;
+  end;
+
+  { TImageLib }
+
+  TImageLib = class
+  private
+    function GetItem (Index: Integer): TLibImage;
+    procedure SetItem (Index: Integer; const Value: TLibImage);
+  public
+    FList : TList;
+    property Items[Index: Integer]: TLibImage read GetItem write SetItem; default;
+    constructor Create;
+    destructor Destroy; override;
+    function Count : integer;
+    procedure Sort;
+    function Add (anImage : TLibImage) : integer;  overload;
+    function Add (aName : string; aPng : TImage32) : integer; overload;
+    procedure Clear;
+    procedure Remove (anImage : TLibImage);
+    function IndexOf (anImage : TLibImage) : integer;
+    function Rename (OldName, NewName : string) : boolean;
+    function GetPng (byIndex : integer) : TImage32; overload;
+    function GetPng (byName : string) : TImage32; overload;
+    function GetPng (byName : string; w, h : integer) : TImage32; overload;
+    function GetImage (byName : string) : TLibImage;
+    function SaveToResource (aRes : THandle) : boolean;
+  end;
 
 { TCanvas }
 
   TCanvas = class
-  private
-    IP : TFPCustomInterpolation;
-    function GetFont (byFont : string; Load : boolean) : TFontInfo;
   public
     ColourFormat : LongWord;
     Width, Height : integer;
@@ -46,57 +78,20 @@ type
     Buffer : PByteArray;
     BufferSize : integer;
     BitCount : integer;
-    Fonts : TList;
-    procedure FindFonts;
     procedure SetSize (w, h : integer; cf : LongWord);
     procedure Fill (Col : LongWord); overload;
     procedure Fill (Rect : Ultibo.TRect; Col : LongWord); overload;
-    function TextExtents (Text, Font : string; Size : integer) : FT_Vector;
-    procedure DrawText (x, y: integer; Text, Font : string; FontSize : integer; Col : LongWord); overload;
-    procedure DrawText (x, y: integer; Text, Font : string; FontSize : integer; Col : LongWord; Alpha : byte); overload;
+    function GetScanLine (no : integer) : PLongWord;
+    procedure DrawText (x, y : integer; Text, Font : string; FontSize : integer; Col : LongWord; Alpha : byte = 255); overload;
+    procedure DrawText (x, y : integer; Text : string; Font : TFontInfo; FontSize : integer; Col : LongWord; Alpha : byte = 255); overload;
     procedure Flush (FrameBuff : PFrameBufferDevice; x, y : integer); overload;
     procedure Flush (FrameBuff : PFrameBufferDevice); overload;
     procedure Assign (anOther : TCanvas);
-    procedure DrawImage (anImage : TFPCustomImage; x, y : integer);  overload;
-    procedure DrawImage (anImage : TFPCustomImage; x, y, h, w : integer); overload;
+    procedure DrawCanvas (aCanvas : TCanvas; x, y : integer);
+    procedure DrawImage (anImage : TImage32; x, y : integer; Alpha : byte = 255);  overload;
+    procedure DrawImage (anImage : TImage32; x, y, w, h : integer; Alpha : byte = 255); overload;
     constructor Create;
     destructor Destroy; override;
-  end;
-
-{ TFPCustomInterpolation }
-
-  TFPCustomInterpolation = class
-  private
-    FCanvas: TCanvas;
-    FImage: TFPCustomImage;
-  protected
-  public
-    procedure Initialise (anImage : TFPCustomImage; aCanvas : TCanvas); virtual;
-    procedure Execute (x, y, w, h : integer); virtual; abstract;
-
-    property Canvas : TCanvas read fCanvas;
-    property Image : TFPCustomImage read fimage;
-  end;
-
-{ TFPBaseInterpolation }
-
-  TFPBaseInterpolation = class (TFPCustomInterpolation)
-  private
-    procedure CreatePixelWeights (OldSize, NewSize : integer;
-      out Entries: Pointer; out EntrySize : integer; out Support : integer);
-  protected
-  public
-    procedure Execute (x, y, w, h : integer); override;
-    function Filter (x : double) : double; virtual;
-    function MaxSupport : double; virtual;
-  end;
-
-{ TMitchelInterpolation }
-
-  TMitchelInterpolation = class (TFPBaseInterpolation)
-  protected
-    function Filter (x : double) : double; override;
-    function MaxSupport : double; override;
   end;
 
 function SetRect (Left, Top, Right, Bottom : long) : Ultibo.TRect;
@@ -105,18 +100,90 @@ function GetGValue (c : LongWord) : byte;
 function GetBValue (c : LongWord) : byte;
 function rgb (r, g, b : byte) : LongWord; inline;
 
+procedure ReSize (dst, src : TImage32);
+procedure CollectImages;
+
+function TextExtents (Text, Font : string; FontSize : integer) : FT_Vector; overload;
+function TextExtents (Text : string; Font : TFontInfo; FontSize : integer) : FT_Vector; overload;
+
+var
+  Images : TImageLib;
+
 implementation
 
 uses GlobalConst, uLog, Math;
 
 var
   FTLib : PFT_Library;                // handle to FreeType library
+  i : integer;
 
 function FT_New_Memory_Face (alibrary: PFT_Library; file_base: pointer; file_size: longint; face_index: integer; var face: PFT_Face) : integer; cdecl; external freetypedll Name 'FT_New_Memory_Face';
 
 const
-  DPI                           = 72;
-{ TCanvas }
+  DPI = 72;
+
+procedure ReSize (dst, src : TImage32);
+var
+  xscale, yscale : single;
+  sfrom_y, sfrom_x : single;
+  ifrom_y, ifrom_x : integer;
+  to_y, to_x : integer;
+  weight_x, weight_y : array[0..1] of single;
+  weight : single;
+  new_red, new_green : integer;
+  new_blue, new_alpha : integer;
+  total_red, total_green : single;
+  total_blue, total_alpha: single;
+  ix, iy : integer;
+  sli, slo : PImage32Value;
+begin
+  xscale := dst.Width / (src.Width - 1);
+  yscale := dst.Height / (src.Height - 1);
+  for to_y := 0 to dst.Height - 1 do
+    begin
+      sfrom_y := to_y / yscale;
+      ifrom_y := Trunc(sfrom_y);
+      weight_y[1] := sfrom_y - ifrom_y;
+      weight_y[0] := 1 - weight_y[1];
+      for to_x := 0 to dst.Width - 1 do
+        begin
+          sfrom_x := to_x / xscale;
+          ifrom_x := Trunc (sfrom_x);
+          weight_x[1] := sfrom_x - ifrom_x;
+          weight_x[0] := 1 - weight_x[1];
+          total_red   := 0.0;
+          total_green := 0.0;
+          total_blue  := 0.0;
+          total_alpha  := 0.0;
+          for ix := 0 to 1 do
+            begin
+              for iy := 0 to 1 do
+                begin
+                  sli := src.GetScanline (ifrom_y + iy);
+                  new_red := sli[ifrom_x + ix].R;
+                  new_green := sli[ifrom_x + ix].G;
+                  new_blue := sli[ifrom_x + ix].B;
+                  new_alpha := sli[ifrom_x + ix].A;
+                  weight := weight_x[ix] * weight_y[iy];
+                  total_red := total_red  + new_red  * weight;
+                  total_green := total_green + new_green * weight;
+                  total_blue := total_blue + new_blue  * weight;
+                  total_alpha := total_alpha + new_alpha  * weight;
+                end;
+            end;
+          slo := dst.GetScanLine (to_y);
+          slo[to_x].R := Round (total_red);
+          slo[to_x].G := Round (total_green);
+          slo[to_x].B := Round (total_blue);
+          slo[to_x].A := Round (total_alpha);
+        end;
+    end;
+end;
+
+function FT_HAS_KERNING (face : PFT_Face) : boolean;
+begin
+  Result := (face^.face_flags and FT_FACE_FLAG_KERNING) <> 0;
+end;
 
 function SetRect (Left, Top, Right, Bottom : long) : Ultibo.TRect;
 begin
@@ -146,68 +213,214 @@ begin
   Result := $ff000000 + (r shl 16) + (g shl 8) + b;
 end;
 
-function TCanvas.TextExtents (Text, Font : string; Size : integer) : FT_Vector;
-var
-  err : integer;
-  aFace : PFT_Face;
-  fn : string;
-  i: integer;
-  kerning : boolean;
-  glyph_index,
-  prev : cardinal;
-  delta : FT_Vector;
-  anInfo : TFontInfo;
+{ TImage32 }
+
+function TImage32.GetScanline (no: integer) : PImage32Value;
 begin
-  Result.x := 0;
-  Result.y := 0;
-  delta.x := 0;
-  delta.y := 0;
-  if not Assigned (FTLib) then exit;
-  aFace := nil;
-  if ExtractFileExt (Font) = '' then
+  LongWord (Result) := LongWord (FData) + (no * Width * SizeOf (TImage32Value));
+end;
+
+{ TLibImage }
+procedure TLibImage.Assign (Other : TLibImage);
+begin
+  if Other = nil then exit;
+  Name := Other.Name;
+  Path := Other.Path;
+  Width := Other.Width;
+  Height := Other.Height;
+  DefImage := Other.DefImage;
+  Image.Assign (Other.Image);
+end;
+
+constructor TLibImage.Create;
+begin
+  Image := TImage32.Create (0, 0);
+  Path := '';
+  Name := '';
+  Width := 0;
+  Height := 0;
+  DefImage := false;
+end;
+
+destructor TLibImage.Destroy;
+begin
+  Image.Free;
+  inherited;
+end;
+
+{TImageLib }
+
+function TImageLib.Add (anImage : TLibImage): integer;
+begin
+  FList.Add (anImage);
+  Result := FList.Count - 1;
+end;
+
+function TImageLib.Add (aName : string; aPng : TImage32) : integer;
+var
+  anImage : TLibImage;
+begin
+  anImage := TLibImage.Create;
+  anImage.Image := aPng;
+  anImage.Name := aName;
+  Result := Add (anImage);
+end;
+
+procedure TImageLib.Clear;
+var
+  i : integer;
+begin
+  for i := 0 to FList.Count - 1 do TLibImage (FList[i]).Free;
+  FList.Clear;
+end;
+
+function TImageLib.Count : integer;
+begin
+  Result := FList.Count;
+end;
+
+constructor TImageLib.Create;
+begin
+  inherited;
+  FList := TList.Create;
+end;
+
+destructor TImageLib.Destroy;
+var
+  i : integer;
+begin
+  for i := 0 to FList.Count - 1 do TLibImage (FList[i]).Free;
+  FList.Free;
+  inherited;
+end;
+
+function TImageLib.GetImage (byName : string) : TLibImage;
+var
+  i : integer;
+begin
+  for i := 0 to FList.Count - 1 do
+    begin
+      Result := TLibImage (FList[i]);
+      if CompareText (Result.Name, byName) = 0 then exit;
+    end;
+  Result := nil;
+end;
+
+function TImageLib.GetItem (Index : Integer) : TLibImage;
+begin
+  if (Index >= 0) and (Index < FList.Count) then
+    Result := TLibImage (FList[Index])
+  else
+    Result := nil;
+end;
+
+function TImageLib.GetPng (byIndex : integer) : TImage32;
+var
+  anImage : TLibImage;
+begin
+  anImage := Items[byIndex];
+  if anImage <> nil then
+    Result := anImage.Image
+  else
+    Result := nil;
+end;
+
+function TImageLib.GetPng (byName : string) : TImage32;
+var
+  i : integer;
+  anImage : TLibImage;
+begin
+  for i := 0 to FList.Count - 1 do
+    begin
+      anImage := TLibImage (FList[i]);
+      if (CompareText (anImage.Name, byName) = 0) and (anImage.DefImage) then
+        begin
+          Result := anImage.Image;
+          exit;
+        end;
+     end;
+   Result := nil;
+end;
+
+function TImageLib.GetPng (byName : string; w, h : integer) : TImage32;
+var
+  i : integer;
+  anImage : TLibImage;
+begin
+  for i := 0 to FList.Count - 1 do
+    begin
+      anImage := TLibImage (FList[i]);
+      if (CompareText (anImage.Name, byName) = 0) and (anImage.Width = w) and
+         (anImage.Height = h) then
+        begin
+          Result := anImage.Image;
+          exit;
+        end;
+     end;
+   Result := nil;
+end;
+
+function TImageLib.IndexOf (anImage : TLibImage) : integer;
+begin
+  Result := FList.IndexOf (anImage);
+end;
+
+procedure TImageLib.Remove (anImage : TLibImage);
+begin
+  if anImage = nil then exit;
+  FList.Remove (anImage);
+  anImage.Free;
+end;
+
+function TImageLib.Rename (OldName, NewName : string): boolean;
+var
+  anImage : TLibImage;
+begin
+  Result := false;
+  anImage := GetImage (NewName);
+  if anImage <> nil then exit; // aleady present
+  anImage := GetImage (OldName);
+  if anImage = nil then exit;
+  anImage.Name := NewName;
+end;
+
+function TImageLib.SaveToResource (aRes : THandle) : boolean;
+begin
+  Result := false;
+end;
+
+procedure TImageLib.SetItem (Index : Integer; const Value : TLibImage);
+begin
+  if (Index >= 0) and (Index < FList.Count) then
+    FList[Index] := Value;
+end;
+
+function ImageSort (Item1, Item2: Pointer) : integer;
+begin
+  Result := CompareText (TLibImage (Item1).Name, TLibImage (Item2).Name);
+end;
+
+procedure TImageLib.Sort;
+begin
+  FList.Sort (@ImageSort);
+end;
+
+{ TCanvas }
+
+procedure TCanvas.DrawText (x, y : integer; Text, Font : string; FontSize : integer; Col : LongWord; Alpha : byte = 255); overload;
+var
+  anInfo : TFontInfo;
+  fn : string;
+begin
+   if ExtractFileExt (Font) = '' then
     fn := Font + '.ttf'
   else
     fn := Font;
-  anInfo := GetFont (fn, true);
-  if anInfo = nil then exit;
-  err := FT_New_Memory_Face (FTLIB, anInfo.Stream.Memory, anInfo.Stream.Size, 0, aFace);
-  if err = 0 then  // if font face loaded ok
-    begin
-      err := FT_Set_Char_Size (aFace,                   // handle to face object
-             0,                                         // char width in 1/64th of points - Same as height
-             Size * 64,                                 // char height in 1/64th of points
-             DPI,                                       // horizontal device resolution
-             0);                                        // vertical device resolution
-      if err = 0 then
-        begin
-          prev := 0;    // no previous char
-          kerning := FT_HAS_KERNING (aFace);
-          for i := 1 to length (Text) do
-            begin                                       // convert character code to glyph index
-              glyph_index := FT_Get_Char_Index (aFace, cardinal (Text[i]));
-              if kerning and (prev <> 0) and (glyph_index <> 0) then
-                begin
-                  FT_Get_Kerning (aFace, prev, glyph_index, FT_KERNING_DEFAULT, &delta);
-                  Result.x := Result.x + delta.x;
-                  //if aFace^.glyph^.bitmap^.height + aFace^.glyph^.bitmap_top > Result.y then
-                    //Result.y := aFace^.glyph^.bitmap^.height + aFace^.glyph^.bitmap_top;
-                end;
-               // load glyph image into the slot (erase previous one)
-               err := FT_Load_Glyph (aFace, glyph_index, FT_LOAD_NO_BITMAP);
-               if err > 0 then continue;                // ignore errors
-               Result.x := Result.x + aFace^.glyph^.advance.x;
-               //if aFace^.glyph^.bitmap^.height + aFace^.glyph^.bitmap_top > Result.y then
-                 //Result.y := aFace^.glyph^.bitmap^.height + aFace^.glyph^.bitmap_top;
-               prev := glyph_index;
-            end;
-        end;
-      FT_Done_Face (aFace);
-    end;
-  Result.x := Result.x div 64;
-  Result.y := Result.y div 64;
+  anInfo := GetFontByName (fn, true);
+  DrawText (x, y, Text, anInfo, FontSize, Col, Alpha);
 end;
 
-procedure TCanvas.DrawText (x, y : integer; Text, Font : string; FontSize : integer; Col : LongWord; Alpha : byte);
+procedure TCanvas.DrawText (x, y : integer; Text : string; Font : TFontInfo; FontSize : integer; Col : LongWord; Alpha : byte = 255); overload;
 var
   err : integer;
   aFace : PFT_Face;
@@ -217,7 +430,9 @@ var
   glyph_index,
   prev : cardinal;
   delta : FT_Vector;
-  anInfo : TFontInfo;
+  bg : LongWord;
+  CharCode : cardinal;
+  FirstByte, UTF8Bytes : byte;
 
   procedure DrawChar (b : FT_Bitmap; dx, dy : integer);
   var
@@ -226,7 +441,7 @@ var
     p, q : integer;
     fm : PByte;
     rd, gn, bl : byte;
-    cp : PCardinal; // canvas pointer
+    cp : PLongWord; // canvas pointer
    begin
     x_max := dx + b.width;
     y_max := dy + b.rows;
@@ -239,9 +454,7 @@ var
             begin
               if (j >= 0) and (j < Height) then
                 begin
-{$warnings off}
-                  cp := PCardinal (LongWord (Buffer) + ((j * Width) + dx) * 4);
-{$warnings on}
+                  LongWord (cp) := LongWord (Buffer) + ((j * Width) + dx) * 4;
                   p := 0;
                   for i := dx to x_max - 1 do
                     begin
@@ -271,109 +484,66 @@ begin
   ty := y;
   delta.x := 0;
   delta.y := 0;
-  if ExtractFileExt (Font) = '' then
-    fn := Font + '.ttf'
-  else
-    fn := Font;
-  anInfo := GetFont (fn, true);
-  if anInfo = nil then exit;
-  err := FT_New_Memory_Face (FTLIB, anInfo.Stream.Memory, anInfo.Stream.Size, 0, aFace);
+  if Font = nil then exit;
+  err := FT_New_Memory_Face (FTLib, Font.Stream.Memory, Font.Stream.Size, 0, aFace);
   if err = 0 then  // if font face loaded ok
     begin
       err := FT_Set_Char_Size (aFace,                   // handle to face object
              0,                                         // char_width in 1/64th of points - Same as height
-             FontSize * 64,                             // char_height in 1/64th of points
-             DPI,                                       // horizontal device resolution - dots per inch
-             0);                                        // vertical device resolution - dots per inch
+             FontSize * 64,                                   // char_height in 1/64th of points
+             DPI,                                       // horizontal device resolution
+             0);                                        // vertical device resolution
       if err = 0 then
         begin
           prev := 0;    // no previous char
           kerning := FT_HAS_KERNING (aFace);
-          for i := 1 to length (Text) do
-            begin                                       // convert character code to glyph index
-              glyph_index := FT_Get_Char_Index (aFace, cardinal (Text[i]));
-              if kerning and (prev <> 0) and (glyph_index <> 0) then
+          i := 1;
+          while i <= length (Text) do
+            begin
+              FirstByte := byte (Text[1]);
+              UTF8Bytes := 1;
+              if FirstByte >= $80 then //  110xxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              if FirstByte >= $E0 then //  1110xxxx 10xxxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              if FirstByte >= $F0 then //  11110zzz 11zzxxxx 10xxxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              CharCode := 0;
+              if i + (UTF8Bytes - 1) <= length (Text) then
+                case UTF8Bytes of
+                  1 : CharCode := cardinal (Text[i]);                              // 1Byte
+                  2 : CharCode := (cardinal (Text[i]) and $1F ) * $40 +            // 000xxxxx
+                                  (cardinal (Text[i + 1]) and $3F);                // 00xxxxxx
+                  3 : CharCode := (cardinal (Text[i]) and $0F) * $1000 +           // 0000xxxx
+                                  (cardinal (Text[i + 1]) and $3F) * $40 +         // 00xxxxxx
+                                  (cardinal (Text[i + 2]) and $3F);                // 00xxxxxx
+                  4 : CharCode := (cardinal (Text[i]) and $07) * $4000 +           // 0000xxxx
+                                  (cardinal (Text[i + 1]) and $0F) * $1000 +       // 0000xxxx
+                                  (cardinal (Text[i + 2]) and $3F) * $40 +         // 00xxxxxx
+                                  (cardinal (Text[i + 3]) and $3F);                // 00xxxxxx
+                  end;
+              i := i + UTF8Bytes;
+              if CharCode <> 0 then
                 begin
-                  FT_Get_Kerning (aFace, prev, glyph_index, FT_KERNING_DEFAULT, &delta);
-                  tx := tx + delta.x div 64;
+                  glyph_index := FT_Get_Char_Index (aFace, CharCode);
+                  if kerning and (prev <> 0) and (glyph_index <> 0) then
+                    begin
+                      FT_Get_Kerning (aFace, prev, glyph_index, FT_KERNING_DEFAULT, &delta);
+                      tx := tx + delta.x div 64;
+                    end;
+                  // load glyph image into the slot (erase previous one)
+                  err := FT_Load_Glyph (aFace, glyph_index, FT_LOAD_RENDER);
+                  if err > 0 then continue;                // ignore errors
+                  // now draw to our target surface
+                  DrawChar (aFace^.glyph^.bitmap, tx + aFace^.glyph^.bitmap_left,
+                              ty - aFace^.glyph^.bitmap_top);
+                  tx := tx + aFace^.glyph^.advance.x div 64;
+                  prev := glyph_index;
                 end;
-               // load glyph image into the slot (erase previous one)
-               err := FT_Load_Glyph (aFace, glyph_index, FT_LOAD_RENDER);
-               if err > 0 then continue;                // ignore errors
-               // now draw to our target surface
-               DrawChar (aFace^.glyph^.bitmap, tx + aFace^.glyph^.bitmap_left,
-                          ty - aFace^.glyph^.bitmap_top);
-               tx := tx + aFace^.glyph^.advance.x div 64;
-               prev := glyph_index;
             end;
         end;
       FT_Done_Face (aFace);
     end;
-end;
-
-procedure TCanvas.DrawText (x, y : integer; Text, Font : string;
-  FontSize: integer; Col: LongWord);
-begin
-  DrawText (x, y, text, Font, FontSize, Col, 255);
-end;
-
-function TCanvas.GetFont (byFont : string; Load : boolean) : TFontInfo;
-var
-  i : integer;
-  f : TFilestream;
-begin
-  Result := nil;
-  for i :=  0 to Fonts.Count - 1 do
-    begin
-      if TFontInfo (Fonts[i]).FileName = byFont then
-        begin
-          Result := TFontInfo (Fonts[i]);
-          break;
-        end;
-    end;
-  if (Result = nil) and FileExists (byFont) then
-    begin
-      Result := TFontInfo.Create;
-      if FontInfo (byFont, Result) then
-        Fonts.Add (Result)
-      else
-        begin
-          Result.Free;
-          Result := nil;
-        end;
-    end;
-  if (Result = nil) or (not Load) then exit;
-  if Result.Stream <> nil then exit;        // already loaded
-  Result.Stream := TMemoryStream.Create;
-  try
-    f := TFileStream.Create (byFont, fmOpenRead);
-    Result.Stream.CopyFrom (f, f.Size);
-    f.Free;
-  except
- //   Log ('Error loading font.');
-    Result.Stream.Free;
-    Result.Stream := nil;
-    end;
-end;
-
-procedure TCanvas.FindFonts;
-var
-  i : integer;
-  SearchRec : TSearchRec;
-  anInfo : TFontInfo;
-begin
-  for i := 0 to Fonts.Count - 1 do   // first clear list
-    TFontInfo (Fonts[i]).Free;
-  Fonts.Clear;
-  if FindFirst ('C:\*.ttf', faAnyFile, SearchRec) = 0 then
-    repeat
-      anInfo := TFontInfo.Create;
-      if FontInfo (SearchRec.Name, anInfo) then
-        Fonts.Add (anInfo)
-      else
-        anInfo.Free;
-    until FindNext (SearchRec) <> 0;
-  FindClose (SearchRec);
 end;
 
 procedure TCanvas.SetSize (w, h : integer; cf : LongWord);
@@ -414,18 +584,16 @@ begin
   Fill (Rect, Col);
 end;
 
-procedure TCanvas.Fill (Rect: Ultibo.TRect; Col: LongWord);
+procedure TCanvas.Fill (Rect : Ultibo.TRect; Col : LongWord);
 var
   i, j : integer;
-  p : pointer;
+  px, py : PLongWord;
 begin
   case ColourFormat of
     COLOR_FORMAT_ARGB32 : {32 bits per pixel Red/Green/Blue/Alpha (RGBA8888)}
       begin
-//        Log ('Fill Width ' + IntToStr (Rect.right - rect.left) + ' Height '
-//        + IntToStr (Rect.bottom - rect.top));
         if Rect.left < 0 then Rect.left:= 0;
-        if Rect.top < 0 then rect.top := 0;
+        if Rect.top < 0 then Rect.top := 0;
         if Rect.left >= Width then exit;
         if Rect.top >= Height then exit;
         if Rect.right >= Width then Rect.right := width - 1;
@@ -434,15 +602,21 @@ begin
         if Rect.top >= Rect.bottom then exit;
         for j := Rect.top to Rect.bottom do
           begin
-            cardinal (p) := cardinal (Buffer) + ((j * Width) + Rect.left) * 4;
+            py := GetScanline (j);
+            px := @py[Rect.left];
             for i := Rect.left to Rect.right do
               begin       // 000000ff blue   0000ff00 green    00ff0000 red
-                PCardinal (p)^ := Col;
-                Inc (p, 4);
+                px^ := Col;
+                Inc (px);
               end;
           end;
       end;
     end;
+end;
+
+function TCanvas.GetScanLine (no: integer) : PLongWord;
+begin
+  LongWord (Result) := LongWord (Buffer) + (no * Width * SizeOf (LongWord));
 end;
 
 procedure TCanvas.Flush (FrameBuff : PFrameBufferDevice; x, y : integer);
@@ -462,52 +636,81 @@ begin
   Move (anOther.Buffer[0], Buffer[0], BufferSize);
 end;
 
-procedure TCanvas.DrawImage (anImage: TFPCustomImage; x, y: integer);     // derived from FPCanvas
+procedure TCanvas.DrawCanvas (aCanvas : TCanvas; x, y : integer);
 var
-  xx, xi, yi, xm, ym, r, t : integer;
-  c : cardinal;
-  aCol : TFPColor;
-  a : byte;
-  p : pointer;
+  xm, ym, rw : integer;
+  psx, psy, pdx, pdy : PLongWord;
 begin
+  xm := aCanvas.Width - 1;
+  if xm + x >= Width then xm := Width - (x + 1);
+  ym := aCanvas.Height - 1;
+  if ym + y >= Height then ym := Height - (y + 1);
+  if (x > Width) or (y > Height) then exit;
+  psy := aCanvas.GetScanLine (0);
+  pdy := GetScanLine (y);
+  for rw := 0 to ym do
+    begin
+      psx := @psy[0];
+      pdx := @pdy[rw];
+      Move (psx^, pdx^, xm * 4);
+      Inc (psy, aCanvas.Width);
+      Inc (pdy, Width);
+    end;
+end;
+
+procedure TCanvas.DrawImage (anImage : TImage32; x, y : integer; Alpha : byte = 255);
+var
+  xm, ym : integer;
+  c : cardinal;
+  rw, cl : integer;
+  slx, sly : PImage32Value;
+  a : byte;
+  px, py : PLongWord;
+begin
+  if anImage = nil then exit;
   xm := x + anImage.width - 1;
   if xm >= width then xm := width - 1;
   ym := y + anImage.height - 1;
   if ym >= height then ym := height - 1;
-  xi := x;
-  yi := y;
-  for r := xi to xm do
+  if (y > height) or (x > width) then exit;
+  sly := anImage.GetScanline (0);
+  py := GetScanline (y);
+  for rw := 0 to ym - y do
     begin
-      xx := r - x;
-      for t := yi to ym do
+      slx := @sly[0];
+      px := @py[x];
+      for cl := 0 to xm - x do
         begin
-   //     colors [r,t] := anImage.colors[xx,t-y];
-          aCol := anImage.Colors[xx, t - y];
-          LongWord (p) := LongWord (Buffer) + ((t * Width) + r) * 4;
-          a := aCol.alpha div $100;
-          c := ((GetRValue (PLongWord (p)^) * (255 - a)) + (aCol.red div $100) * a) div $100;
+          a := (slx^.A * Alpha) div $100;
+          c := ((GetRValue (px^) * (255 - a)) + slx^.R * a) div $100;
           c := c shl 8;
-          c := c + ((GetGValue (PLongWord (p)^) * (255 - a)) + (aCol.green div $100) * a) div $100;
+          c := c + ((GetGValue (px^) * (255 - a)) + slx^.G * a) div $100;
           c := c shl 8;
-          c := c + ((GetBValue (PLongWord (p)^) * (255 - a)) + (aCol.blue div $100) *  a) div $100;
-          PLongWord (p)^ := c;
+          c := c + ((GetBValue (px^) * (255 - a)) + slx^.B *  a) div $100;
+          px^ := c;
+          Inc (slx);
+          Inc (px);
         end;
+      Inc (sly, anImage.Width);
+      Inc (py, Width);
     end;
 end;
 
-procedure TCanvas.DrawImage (anImage: TFPCustomImage; x, y, h, w : integer);
+procedure TCanvas.DrawImage (anImage: TImage32; x, y, w, h : integer; Alpha : byte = 255);
+var
+  fi : TImage32;
 begin
-  if IP = nil then IP := TMitchelInterpolation.Create;
-   try
-     with IP do
-       begin
-         Initialise (anImage, Self);
-         Execute (x, y, h, w);
-       end;
-   finally
-     end;
+  if anImage = nil then exit;
+  if (h = anImage.Height) and (w = anImage.Width) then
+    DrawImage (anImage, x, y, Alpha)
+  else
+    begin
+      fi := TImage32.Create (w, h);
+      ReSize (fi, anImage);
+      DrawImage (fi, x, y, Alpha);
+      fi.free;
+    end;
 end;
-
 
 constructor TCanvas.Create;
 var
@@ -518,300 +721,154 @@ begin
   Left := 0;
   Top := 0;
   Buffer := nil;
-  IP := nil;
   ColourFormat := COLOR_FORMAT_UNKNOWN;
-  Fonts := TList.Create;
   if FTLib = nil then
     begin
       res := FT_Init_FreeType (FTLib);
-      if res <> 0 then log ('FTLib failed to Initialise.');
+      if res <> 0 then Log ('FTLib failed to Initialise.');
     end;
 end;
 
 destructor TCanvas.Destroy;
-var
-  i : integer;
 begin
-  for i := 0 to Fonts.Count - 1 do TFontInfo (Fonts[i]).Free;
-  Fonts.Free;
-  if IP <> nil then IP.Free;
   if Buffer <> nil then FreeMem (Buffer);
   inherited;
 end;
 
-
-{ TFPCustomInterpolation }
-
-procedure TFPCustomInterpolation.Initialise (anImage: TFPCustomImage; aCanvas: TCanvas);
-begin
-  FImage := anImage;
-  FCanvas := aCanvas;
-end;
-
-{ TFPBaseInterpolation }
-
-procedure TFPBaseInterpolation.CreatePixelWeights(OldSize, NewSize : integer;
-  out Entries : Pointer; out EntrySize : integer; out Support : integer);
-// create an array of #NewSize entries. Each entry starts with an integer
-// for the StartIndex, followed by #Support singles for the pixel weights.
-// The sum of weights for each entry is 1.
+function TextExtents (Text, Font : string; FontSize : integer) : FT_Vector; overload;
 var
-  Entry: Pointer;
-
-  procedure SetSupport (NewSupport : integer);
-  begin
-    Support := NewSupport;
-    EntrySize := SizeOf (integer) + SizeOf (Single) * Support;
-    GetMem (Entries, EntrySize * NewSize);
-    Entry := Entries;
-  end;
-
-var
-  i : Integer;
-  Factor : double;
-  StartPos : Double;
-  StartIndex : Integer;
-  j : Integer;
-  FirstValue : Double;
+  anInfo : TFontInfo;
+  fn : string;
 begin
-  if NewSize = OldSize then
-    begin
-      SetSupport (1);
-      for i := 0 to NewSize - 1 do
-        begin // 1:1
-          PInteger (Entry)^ := i;
-          inc (Entry, SizeOf (Integer));
-          PSingle (Entry)^ := 1.0;
-          inc (Entry, SizeOf (Single));
-        end;
-    end
-  else if NewSize < OldSize then
-    begin // shrink
-      SetSupport (Max (2, (OldSize + NewSize - 1) div NewSize));
-      Factor := double (OldSize) / double (NewSize);
-      for i := 0 to NewSize - 1 do
-        begin
-          StartPos := Factor * i;
-          StartIndex := Floor (StartPos);
-          PInteger (Entry)^:=StartIndex;
-          inc (Entry, SizeOf (Integer));
-          // first pixel
-          FirstValue := (1.0 - (StartPos - double (StartIndex)));
-          PSingle (Entry)^ := FirstValue / Factor;
-          inc (Entry, SizeOf (Single));
-          // middle pixel
-          for j := 1 to Support - 2 do
-            begin
-              PSingle (Entry)^ := 1.0 / Factor;
-              inc (Entry, SizeOf (Single));
-            end;
-          // last pixel
-          PSingle(Entry)^ := (Factor - FirstValue - (Support - 2)) / Factor;
-          inc (Entry, SizeOf (Single));
-        end;
-      end
-    else
-      begin // enlarge
-        if OldSize = 1 then
-          begin
-            SetSupport (1);
-            for i := 0 to NewSize - 1 do
-              begin
-                // nothing to interpolate
-                PInteger (Entry)^ :=0;
-                inc (Entry, SizeOf (Integer));
-                PSingle (Entry)^ := 1.0;
-                inc (Entry, SizeOf (Single));
-              end;
-          end
-        else
-          begin
-            SetSupport (2);
-            Factor := double (OldSize - 1) / double (NewSize);
-            for i := 0 to NewSize - 1 do
-              begin
-                StartPos := Factor * i + Factor / 2;
-                StartIndex := Floor (StartPos);
-                PInteger (Entry)^ := StartIndex;
-                inc (Entry, SizeOf (Integer));
-                // first pixel
-                FirstValue := (1.0 - (StartPos - double (StartIndex)));
-                // convert linear distribution
-                FirstValue := Min (1.0, Max (0.0, Filter (FirstValue / MaxSupport)));
-                PSingle(Entry)^ := FirstValue;
-                inc (Entry, SizeOf (Single));
-                // last pixel
-                PSingle (Entry)^ := 1.0 - FirstValue;
-                inc (Entry, SizeOf (Single));
-              end;
-          end;
-     end;
-  if Entry <> Entries + EntrySize * NewSize then
-    raise Exception.Create ('TFPBase2Interpolation.Execute inconsistency');
-end;
-
-procedure TFPBaseInterpolation.Execute (x, y, w, h : integer);
-// paint Image on Canvas at x,y,w*h
-var
-  dy : Integer;
-  dx : Integer;
-  HorzResized : PFPColor;
-  xEntries : Pointer;
-  xEntrySize : integer;
-  xSupport : integer;// how many horizontal pixel are needed to create one pixel
-  yEntries : Pointer;
-  yEntrySize : integer;
-  ySupport : integer;// how many vertizontal pixel are needed to create one pixel
-  NewSupportLines : LongInt;
-  yEntry : Pointer;
-  SrcStartY : LongInt;
-  LastSrcStartY : LongInt;
-  LastyEntry : Pointer;
-  sy : Integer;
-  xEntry : Pointer;
-  sx : LongInt;
-  cx : Integer;
-  f: Single;
-  NewCol: TFPColor;
-  Col: TFPColor;
-  CurEntry : Pointer;
-  p : pointer;
-  c : cardinal;
-  a : byte;
-begin
-  if (w <= 0) or (h <= 0) or (image.Width = 0) or (image.Height = 0) then exit;
-
-  xEntries := nil;
-  yEntries := nil;
-  HorzResized := nil;
-  try
-    CreatePixelWeights (image.Width, w, xEntries, xEntrySize, xSupport);
-    CreatePixelWeights (image.Height, h, yEntries, yEntrySize, ySupport);
-    // create temporary buffer for the horizontally resized pixel for the
-    // current y line
-    GetMem (HorzResized, w * ySupport * SizeOf (TFPColor));
-    LastyEntry := nil;
-    SrcStartY := 0;
-    for dy := 0 to h - 1 do
-    begin
-      if dy = 0 then
-        begin
-          yEntry := yEntries;
-          SrcStartY := PInteger (yEntry)^;
-          NewSupportLines := ySupport;
-        end
-      else
-        begin
-          LastyEntry := yEntry;
-          LastSrcStartY := SrcStartY;
-          inc (yEntry, yEntrySize);
-          SrcStartY := PInteger (yEntry)^;
-          NewSupportLines := SrcStartY - LastSrcStartY;
-          // move lines up
-          if (NewSupportLines > 0) and (ySupport > NewSupportLines) then
-            System.Move (HorzResized[NewSupportLines * w],
-                         HorzResized[0],
-                        (ySupport - NewSupportLines) * w * SizeOf (TFPColor));
-        end;
-
-        // compute new horizontally resized line(s)
-        for sy := ySupport - NewSupportLines to ySupport - 1 do
-          begin
-            xEntry := xEntries;
-            for dx := 0 to w - 1 do
-              begin
-                sx := PInteger (xEntry)^;
-                inc (xEntry,SizeOf(integer));
-                NewCol := colTransparent;
-                for cx := 0 to xSupport - 1 do
-                  begin
-                    f := PSingle (xEntry)^;
-                    inc (xEntry, SizeOf (Single));
-                    Col := image.Colors[sx + cx, SrcStartY + sy];
-                    NewCol.red := Min (NewCol.red + round (Col.red * f), $ffff);
-                    NewCol.green := Min (NewCol.green + round (Col.green * f), $ffff);
-                    NewCol.blue := Min (NewCol.blue + round (Col.blue * f), $ffff);
-                    NewCol.alpha := Min (NewCol.alpha + round (Col.alpha * f), $ffff);
-                  end;
-                HorzResized [dx + sy * w] := NewCol;
-              end;
-          end;
-
-      // compute new vertically resized line
-      for dx := 0 to w - 1 do
-        begin
-          CurEntry := yEntry + SizeOf (integer);
-          NewCol := colTransparent;
-          for sy := 0 to ySupport - 1 do
-            begin
-              f := PSingle (CurEntry)^;
-              inc (CurEntry, SizeOf (Single));
-              Col := HorzResized[dx + sy * w];
-              NewCol.red := Min (NewCol.red + round (Col.red * f),$ffff);
-              NewCol.green := Min (NewCol.green + round (Col.green * f),$ffff);
-              NewCol.blue := Min (NewCol.blue + round (Col.blue * f), $ffff);
-              NewCol.alpha := Min (NewCol.alpha + round (Col.alpha * f), $ffff);
-            end;
-          LongWord (p) := LongWord (Canvas.Buffer) + (((y + dy) * Canvas.Width) + x + dx) * 4;
-          a := NewCol.alpha div $100;
-          c := ((GetRValue (PLongWord (p)^) * (255 - a)) + (NewCol.red div $100) * a) div $100;
-          c := c shl 8;
-          c := c + ((GetGValue (PLongWord (p)^) * (255 - a)) + (NewCol.green div $100) * a) div $100;
-          c := c shl 8;
-          c := c + ((GetBValue (PLongWord (p)^) * (255 - a)) + (NewCol.blue div $100) *  a) div $100;
-         PLongWord (p)^ := c;
-        end;
-    end;
-  finally
-    if xEntries <> nil then FreeMem (xEntries);
-    if yEntries <> nil then FreeMem (yEntries);
-    if HorzResized <> nil then FreeMem (HorzResized);
-  end;
-end;
-
-function TFPBaseInterpolation.Filter (x : double) : double;
-begin
-  Result := x;
-end;
-
-function TFPBaseInterpolation.MaxSupport : double;
-begin
-  Result := 1.0;
-end;
-
-{ TMitchelInterpolation }
-
-function TMitchelInterpolation.Filter (x : double) : double;
-const
-  B  = (1.0 / 3.0);
-  C  = (1.0 / 3.0);
-  P0 = ((  6.0 -  2.0 * B       ) / 6.0);
-  P2 = ((-18.0 + 12.0 * B + 6.0 * C) / 6.0);
-  P3 = (( 12.0 -  9.0 * B - 6.0 * C) / 6.0);
-  Q0 = ((         8.0 * B + 24.0 * C) / 6.0);
-  Q1 = ((       -12.0 * B - 48.0 * C) / 6.0);
-  Q2 = ((         6.0 * B + 30.0 * C) / 6.0);
-  Q3 = ((       - 1.0 * B - 6.0 * C) / 6.0);
-begin
-  if (x < -2.0) then
-    Result := 0.0
-  else if (x < -1.0) then
-    Result := Q0 - x * (Q1 - x * (Q2 - x * Q3))
-  else if (x < 0.0) then
-    Result := P0 + x * x * (P2 - x * P3)
-  else if (x < 1.0) then
-    Result := P0 + x * x * (P2 + x * P3)
-  else if (x < 2.0) then
-    Result := Q0 + x * (Q1 + x * (Q2 + x * Q3))
+   if ExtractFileExt (Font) = '' then
+    fn := Font + '.ttf'
   else
-    Result := 0.0;
+    fn := Font;
+  anInfo := GetFontByName (fn, true);
+  Result := TextExtents (Text, anInfo, FontSize);
 end;
 
-function TMitchelInterpolation.MaxSupport : double;
+function TextExtents (Text : string; Font : TFontInfo; FontSize : integer) : FT_Vector; overload;
+var
+  err : integer;
+  aFace : PFT_Face;
+  i: integer;
+  kerning : boolean;
+  glyph_index,
+  prev : cardinal;
+  delta : FT_Vector;
+  CharCode : cardinal;
+  FirstByte, UTF8Bytes : byte;
 begin
-  Result := 2.0;
+  Result.x := 0;
+  Result.y := 0;
+  delta.x := 0;
+  delta.y := 0;
+  if not Assigned (FTLib) then exit;
+  aFace := nil;
+  if Font = nil then exit;
+  err := FT_New_Memory_Face (FTLIB, Font.Stream.Memory, Font.Stream.Size, 0, aFace);
+  if err = 0 then  // if font face loaded ok
+    begin
+      err := FT_Set_Char_Size (aFace,                   // handle to face object
+             0,                                         // char_width in 1/64th of points - Same as height
+             FontSize * 64,                                   // char_height in 1/64th of points
+             DPI,                                       // horizontal device resolution
+             0);                                        // vertical device resolution
+      if err = 0 then
+        begin
+          prev := 0;    // no previous char
+          kerning := FT_HAS_KERNING (aFace);
+          i := 1;
+          while i <= length (Text) do
+            begin
+              FirstByte := byte (Text[1]);
+              UTF8Bytes := 1;
+              if FirstByte >= $80 then //  110xxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              if FirstByte >= $E0 then //  1110xxxx 10xxxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              if FirstByte >= $F0 then //  11110zzz 11zzxxxx 10xxxxxx 10xxxxxx
+                UTF8Bytes := UTF8Bytes + 1;
+              CharCode := 0;
+              if i + (UTF8Bytes - 1) <= length (Text) then
+                case UTF8Bytes of
+                  1 : CharCode := cardinal (Text[i]);                              // 1Byte
+                  2 : CharCode := (cardinal (Text[i]) and $1F ) * $40 +            // 000xxxxx
+                                  (cardinal (Text[i + 1]) and $3F);                // 00xxxxxx
+                  3 : CharCode := (cardinal (Text[i]) and $0F) * $1000 +           // 0000xxxx
+                                  (cardinal (Text[i + 1]) and $3F) * $40 +         // 00xxxxxx
+                                  (cardinal (Text[i + 2]) and $3F);                // 00xxxxxx
+                  4 : CharCode := (cardinal (Text[i]) and $07) * $4000 +           // 0000xxxx
+                                  (cardinal (Text[i + 1]) and $0F) * $1000 +       // 0000xxxx
+                                  (cardinal (Text[i + 2]) and $3F) * $40 +         // 00xxxxxx
+                                  (cardinal (Text[i + 3]) and $3F);                // 00xxxxxx
+                  end;
+              i := i + UTF8Bytes;
+              if CharCode <> 0 then
+                begin
+                  glyph_index := FT_Get_Char_Index (aFace, CharCode);
+                  if kerning and (prev <> 0) and (glyph_index <> 0) then
+                    begin
+                      FT_Get_Kerning (aFace, prev, glyph_index, FT_KERNING_DEFAULT, &delta);
+                      Result.x := Result.x + delta.x;
+                    end;
+                  err := FT_Load_Glyph (aFace, glyph_index, FT_LOAD_NO_BITMAP);
+                  if err > 0 then continue;                // ignore errors
+                  Result.x := Result.x + aFace^.glyph^.advance.x;
+                  if aFace^.glyph^.metrics.height > Result.y then Result.y := aFace^.glyph^.metrics.height;
+                  prev := glyph_index;
+                end;
+            end;
+
+        end;
+      FT_Done_Face (aFace);
+    end;
+  Result.x := Result.x div 64;
+  Result.y := Result.y div 64;
 end;
 
+procedure CollectImages;
+var
+  sr : TSearchRec;
+  err : integer;
+  im : TImage32;
+  i : integer;
+  f : TFileStream;
+  ext : string;
+begin
+  if Images = nil then exit;
+  Images.Clear;
+  err := FindFirst ('*.*', faArchive, sr);
+  while err = 0 do
+    begin
+      ext := LowerCase (ExtractFileExt (sr.Name));
+      if (sr.Name = 'png') or (sr.Name = 'bmp') or (sr.Name = 'jpg') then
+        begin
+          if Images.GetImage (sr.Name) = nil then // does not exist
+            begin
+              im := TImage32.Create (0, 0);
+              if im.LoadFromFile (sr.Name) then
+                Images.Add (sr.Name, im)
+              else
+                im.Free;
+            end;
+        end;
+      err := FindNext (sr);
+    end;
+  FindClose (sr);
+end;
+
+initialization
+
+  Images := TImageLib.Create;
+
+finalization
+
+  Images.Clear;
+  Images.Free;
+
+end.
 
 end.
 

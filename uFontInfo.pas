@@ -25,12 +25,22 @@ type
   end;
   PFontInfo = ^TFontInfo;
 
-
+procedure CollectFonts (PreLoad : boolean = false);
+function GetFont (byDesc : string; var Size : integer) : TFontInfo;
 function FontInfo (fn : string; var Info : TFontInfo) : boolean;
+function GetFontByName (byName : string; Load : boolean) : TFontInfo;
+
+
+var
+  Fonts : TList = nil;
+
 
 implementation
 
 uses ulog;
+
+var
+  i : integer;
 
 type
 
@@ -162,6 +172,119 @@ begin
     end;
 end;
 
+procedure CollectFonts (PreLoad : boolean);
+var
+  sr : TSearchRec;
+  err : integer;
+  fi : TFontInfo;
+  i : integer;
+  f : TFileStream;
+begin
+  if Fonts = nil then exit;
+  for i := 0 to Fonts.Count - 1 do TFontInfo (Fonts[i]).Free;
+  Fonts.Clear;
+  err := FindFirst ('*.ttf', faArchive, sr);
+  while err = 0 do
+    begin
+      fi := TFontInfo.Create;
+      if FontInfo (sr.Name, fi) then
+        begin
+          Fonts.Add (fi);
+          if Preload then
+            try
+              f := TFileStream.Create (sr.Name, fmOpenRead);
+              fi.Stream := TMemoryStream.Create;
+              fi.Stream.CopyFrom (f, 0);
+              f.Free;
+            except
+            end;
+        end
+      else
+         fi.Free;
+      err := FindNext (sr);
+    end;
+  FindClose (sr);
+end;
+const
+  ny : array [boolean] of string = ('NO', 'YES');
+
+function GetFont (byDesc : string; var Size : integer) : TFontInfo;
+var
+  i, j, k : integer;
+  bd, it : boolean;
+  fn : string;
+begin
+  Result := nil;
+  i := Pos ('-', byDesc);
+  if i = 0 then exit;
+  fn := '';
+  bd := false;
+  it := false;
+  try
+    fn := Copy (byDesc, i + 1, length (byDesc) - i);
+ //   log ('family name ' + fn);
+    k := 0;
+    for j := 1 to i - 1 do
+      case byDesc[j] of
+        'B', 'b' : bd := true;
+        'I', 'i' : it := true;
+ //       'U', 'u' : ul := true;  // underline is a rendering function
+        '0'..'9' : k := (k * 10) + (ord (byDesc[j]) - 48);
+      end;
+    if k > 0 then Size := k;
+  except
+  end;
+  for i := 0 to Fonts.Count - 1 do
+    with TFontInfo (Fonts[i]) do
+      if (CompareText (FamilyName, fn) = 0) and
+         ((Pos ('Bold', SubFamilyName) > 0) = bd) and
+         ((Pos ('Italic', SubFamilyName) > 0) = it) then
+        begin
+          Result := TFontInfo (Fonts[i]);
+          exit
+        end;
+end;
+
+function GetFontByName (byName : string; Load : boolean) : TFontInfo;
+var
+  i : integer;
+  f : TFilestream;
+begin
+  Result := nil;
+  for i :=  0 to Fonts.Count - 1 do
+    begin
+      if TFontInfo (Fonts[i]).FileName = byName then
+        begin
+          Result := TFontInfo (Fonts[i]);
+          break;
+        end;
+    end;
+  if (Result = nil) and FileExists (byName) then
+    begin
+      Result := TFontInfo.Create;
+      if FontInfo (byName, Result) then
+        Fonts.Add (Result)
+      else
+        begin
+          Result.Free;
+          Result := nil;
+        end;
+    end;
+  if (Result = nil) or (not Load) then exit;
+  if Result.Stream <> nil then exit;        // already loaded
+  Result.Stream := TMemoryStream.Create;
+  try
+    f := TFileStream.Create (byName, fmOpenRead);
+    Result.Stream.CopyFrom (f, f.Size);
+    f.Free;
+  except
+ //   Log ('Error loading font.');
+    Result.Stream.Free;
+    Result.Stream := nil;
+    end;
+end;
+
+
 { TFontInfo }
 
 constructor TFontInfo.Create;
@@ -174,6 +297,15 @@ begin
   if Assigned (Stream) then Stream.Free;
   inherited Destroy;
 end;
+
+initialization
+
+  Fonts := TList.Create;
+
+finalization
+
+  for i := 0 to Fonts.Count - 1 do TFontInfo (Fonts[i]).Free;
+  Fonts.Free;
 
 end.
 

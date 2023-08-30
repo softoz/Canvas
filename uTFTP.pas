@@ -398,7 +398,7 @@ begin
                   aTransfer.FStream.Seek (0, soFromBeginning);
                   SendDataBlock (aTransfer, 1)
                 except
-                  DoMsg ('U[load of "' + fn + '" failed. - error opening file.');
+                  DoMsg ('Upload of "' + fn + '" failed. - error opening file.');
                   SendError (aTransfer, erACCESS_VIOLATION, 'error opening ' + fn);
                 end;
               end
@@ -448,14 +448,14 @@ begin
                   begin
                     aTransfer.FStream.Seek (0, soFromBeginning);
                     DoMsg ('Download of "' + aTransfer.FileName + '" complete.');
-                    if (aTransfer.FileName = 'kernel7.img') or (aTransfer.FileName = 'kernel.img') then DoMsg ('Restarting.');
+                    if LowerCase (aTransfer.FileName) = LowerCase (ParamStr (0)) then DoMsg ('Restarting.');
                     if FileExists (aTransfer.FileName) then  DeleteFile (aTransfer.FileName);
                     try
                       aFile := TFileStream.Create (aTransfer.FileName, fmCreate);
                       aTransfer.FStream.Seek (0, soFromBeginning);
                       aFile.CopyFrom (aTransfer.FStream, aTransfer.FStream.Size);
                       aFile.Free;
-                      if (aTransfer.FileName = 'kernel7.img') or (aTransfer.FileName = 'kernel.img') then
+                      if LowerCase (aTransfer.FileName) = LowerCase (ParamStr (0)) then // ParamStr(0) will always be the kernel name
                         begin
                           DoMsg ('Restarting.');
                           SystemRestart (0);
