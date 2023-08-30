@@ -51,7 +51,7 @@ var
   i : integer;
   BGnd : TCanvas;
   aCanvas : TCanvas;
-  anImage : TFPCustomImage;
+  anImage : TImage32;
   DefFrameBuff : PFrameBufferDevice;
   Properties : TWindowProperties;
 
@@ -109,7 +109,7 @@ begin
     end;
   aCanvas.Fill (BACK_COLOUR);
 
-  anImage := TFPMemoryImage.Create (0, 0);
+  anImage := TImage32.Create(0, 0);
 
   SetLogProc (@Log1);
   SysLogger := LoggingDeviceFindByType (LOGGING_TYPE_SYSLOG);
